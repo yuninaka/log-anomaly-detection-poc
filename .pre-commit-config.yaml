@@ -5,17 +5,19 @@ repos:
       - id: ruff-check
         args: [--fix]
 
+  # ステージ済みの差分のみを高速にスキャンする一次防御。
+  # リポジトリ全体・全履歴の監査は scripts/ci_check.sh の `gitleaks detect` (CI) が担う。
+  # .github/workflows/ci.yml の GITLEAKS_VERSION と同じバージョンに揃えること。
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
   - repo: local
     hooks:
       - id: mypy
         name: mypy
-        entry: uv run mypy src
+        entry: uv run mypy src tests
         language: system
         pass_filenames: false
         types: [python]
-
-      - id: gitleaks
-        name: gitleaks
-        entry: gitleaks protect --source . --staged --no-banner --redact
-        language: system
-        pass_filenames: false
