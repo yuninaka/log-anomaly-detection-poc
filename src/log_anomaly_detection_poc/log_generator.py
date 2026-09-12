@@ -8,7 +8,7 @@ import pandas as pd
 Label = Literal["normal", "noise", "anomaly"]
 AnomalyType = Literal["isolated_latency_blip", "latency_spike", "error_spike"] | None
 
-LOG_COLUMNS = [
+INTERNAL_COLUMNS = [
     "timestamp",
     "endpoint",
     "status_code",
@@ -16,6 +16,10 @@ LOG_COLUMNS = [
     "label",
     "anomaly_type",
 ]
+# 検知パイプライン(Step2以降)に渡してよい観測ログの列。label/anomaly_typeを含まない。
+OBSERVED_COLUMNS = ["timestamp", "endpoint", "status_code", "latency_ms"]
+# Step4の精度評価専用の正解ラベル。検知パイプラインには一切渡さない。
+GROUND_TRUTH_COLUMNS = ["timestamp", "endpoint", "label", "anomaly_type"]
 
 BUSINESS_HOUR_START = 9
 BUSINESS_HOUR_END = 19
@@ -37,6 +41,7 @@ ERROR_ANOMALY_MAX_MINUTES = 45
 ERROR_ANOMALY_STATUS_CODES = (500, 503)
 
 DEFAULT_SEED = 42
+DAYS_PER_WEEK = 7
 
 
 @dataclass(frozen=True)
@@ -45,6 +50,18 @@ class EndpointProfile:
     mean_latency_ms: float
     std_latency_ms: float
     baseline_error_rate: float
+
+
+@dataclass(frozen=True)
+class LogDataset:
+    """観測ログと正解ラベルを構造的に分離して保持する。
+
+    observedはlabel/anomaly_type列を持たないため、検知関数にそのまま渡しても
+    正解ラベルが混入しようがない。ground_truthはStep4の評価専用。
+    """
+
+    observed: pd.DataFrame
+    ground_truth: pd.DataFrame
 
 
 ENDPOINT_PROFILES: tuple[EndpointProfile, ...] = (
@@ -87,7 +104,7 @@ def _traffic_multiplier(hour_start: datetime) -> float:
 
 
 def _empty_log_frame() -> pd.DataFrame:
-    return pd.DataFrame(columns=LOG_COLUMNS)
+    return pd.DataFrame(columns=INTERNAL_COLUMNS)
 
 
 def _sample_profiles(n: int, rng: np.random.Generator) -> list[EndpointProfile]:
@@ -170,7 +187,7 @@ def _inject_isolated_noise(df: pd.DataFrame, rng: np.random.Generator) -> pd.Dat
 def _random_window(
     week_start: datetime, rng: np.random.Generator, min_minutes: int, max_minutes: int
 ) -> tuple[datetime, datetime]:
-    offset_hours = float(rng.uniform(0, 7 * 24))
+    offset_hours = float(rng.uniform(0, DAYS_PER_WEEK * 24))
     duration_minutes = int(rng.integers(min_minutes, max_minutes + 1))
     window_start = week_start + timedelta(hours=offset_hours)
     window_end = window_start + timedelta(minutes=duration_minutes)
@@ -227,18 +244,32 @@ def _inject_one_error_spike(
 def _inject_weekly_anomalies(
     df: pd.DataFrame, start: datetime, days: int, rng: np.random.Generator
 ) -> pd.DataFrame:
-    for week in range(max(1, days // 7)):
-        week_start = start + timedelta(days=week * 7)
+    """週ごとにlatency_spike・error_spikeを1回ずつ注入する。
+
+    注入回数(週数×2)は決定的だが、各回の発生時刻・継続時間・対象エンドポイントは
+    乱数で決める。業務時間/夜間/週末でトラフィック量が最大6.7倍(1.0/0.15/0.3倍)
+    変動するため、同じ「1回」のイベントでも該当行数は大きくばらつく。結果として
+    生成期間(days)が長いほど異常行数も増える、という単調な関係にはならない。
+    """
+    for week in range(max(1, days // DAYS_PER_WEEK)):
+        week_start = start + timedelta(days=week * DAYS_PER_WEEK)
         df = _inject_one_latency_spike(df, week_start, rng)
         df = _inject_one_error_spike(df, week_start, rng)
     return df
 
 
-def generate_logs(start: datetime, days: int, seed: int = DEFAULT_SEED) -> pd.DataFrame:
+def generate_logs(start: datetime, days: int, seed: int = DEFAULT_SEED) -> LogDataset:
+    if days < 0:
+        raise ValueError(f"days must be zero or a positive integer, got {days}")
+
     rng = np.random.default_rng(seed)
     df = _generate_baseline_requests(start, days, rng)
-    if df.empty:
-        return df
-    df = _inject_isolated_noise(df, rng)
-    df = _inject_weekly_anomalies(df, start, days, rng)
-    return df.sort_values("timestamp").reset_index(drop=True)
+    if not df.empty:
+        df = _inject_isolated_noise(df, rng)
+        df = _inject_weekly_anomalies(df, start, days, rng)
+        df = df.sort_values("timestamp").reset_index(drop=True)
+
+    return LogDataset(
+        observed=df.loc[:, OBSERVED_COLUMNS].copy(),
+        ground_truth=df.loc[:, GROUND_TRUTH_COLUMNS].copy(),
+    )
