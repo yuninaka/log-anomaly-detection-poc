@@ -26,11 +26,14 @@ def test_main_writes_observed_and_ground_truth_csv(tmp_path: Path) -> None:
 
 
 def test_main_is_reproducible_with_same_seed(tmp_path: Path) -> None:
+    # generate_logs自体の再現性はtest_log_generator.pyで検証済みのため、ここでは
+    # CLIのファイル書き出し経路が再現性を壊していないことだけを確認すればよく、
+    # daysは小さい値で十分(2回のmain()呼び出しを軽量に保つ)。
     output_a = tmp_path / "a.csv"
     output_b = tmp_path / "b.csv"
 
-    main(["--days", "7", "--output", str(output_a), "--seed", "1"])
-    main(["--days", "7", "--output", str(output_b), "--seed", "1"])
+    main(["--days", "1", "--output", str(output_a), "--seed", "1"])
+    main(["--days", "1", "--output", str(output_b), "--seed", "1"])
 
     assert output_a.read_text() == output_b.read_text()
 
