@@ -104,7 +104,18 @@ def _traffic_multiplier(hour_start: datetime) -> float:
 
 
 def _empty_log_frame() -> pd.DataFrame:
-    return pd.DataFrame(columns=INTERNAL_COLUMNS)
+    # dtypeを明示しないと全列がobject型になり、空データでも下流のdt.floor等が
+    # datetimelikeでないというAttributeErrorで落ちる。
+    return pd.DataFrame(
+        {
+            "timestamp": pd.Series(dtype="datetime64[ns, UTC]"),
+            "endpoint": pd.Series(dtype="object"),
+            "status_code": pd.Series(dtype="int64"),
+            "latency_ms": pd.Series(dtype="float64"),
+            "label": pd.Series(dtype="object"),
+            "anomaly_type": pd.Series(dtype="object"),
+        }
+    )
 
 
 def _sample_profiles(n: int, rng: np.random.Generator) -> list[EndpointProfile]:
