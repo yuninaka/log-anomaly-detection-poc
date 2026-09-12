@@ -1,0 +1,45 @@
+[project]
+name = "log-anomaly-detection-poc"
+version = "0.1.0"
+description = "AIが生ログ・実データに一切触れず、メタデータのみで異常の絞り込みを行うことを実装レベルで検証するPoC"
+authors = [
+    { name = "Yunin", email = "yuninakamura2023@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+    "vulture",
+    "pip-audit",
+    "pre-commit",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "C90", "PLR", "N", "B", "ANN"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-args = 6
+max-branches = 12
+
+[tool.mypy]
+strict = true
+warn_unreachable = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.coverage.run]
+source = ["src"]
