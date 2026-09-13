@@ -41,6 +41,10 @@ max-branches = 12
 strict = true
 warn_unreachable = true
 disallow_untyped_defs = true
+# tests/type_fixtures/ は意図的に型エラーを含むfixture(Step3の型分離が
+# 崩れていないことをtest_type_separation.pyがmypyのsubprocess実行で検証する
+# ためのもの)。通常のCI用mypy実行(mypy src tests)からは除外する。
+exclude = ["tests/type_fixtures/"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

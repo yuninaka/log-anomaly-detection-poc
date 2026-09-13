@@ -126,3 +126,12 @@ Step4で学習データ量を1週間→2週間→1ヶ月と段階的に拡大す
 実行時間を計測し、異常な遅延がないか確認しながら進めること。
 数分以上遅延する場合は、勝手にリトライやタイムアウト回避を繰り返さず、
 一度作業を止めて遅延箇所を報告すること。
+
+### 前提制約3: プレースホルダー関数の型シグネチャ維持(Step3からの引き継ぎ)
+
+Step3で作成した`compute_anomaly_score`(`src/log_anomaly_detection_poc/data_layers.py`)は
+プレースホルダー(0.0を返すのみ)であり、Step4で実際のSTL分解ロジックに置き換える。
+置き換えの際、関数シグネチャ(`Sequence[MetadataRecord] -> list[float]`)を変更しないこと。
+変更する場合は、`tests/type_fixtures/`内の`valid_call.py`・`invalid_call.py`も同時に
+更新し、`tests/test_type_separation.py`が引き続き型分離を正しく検証できることを
+確認すること。

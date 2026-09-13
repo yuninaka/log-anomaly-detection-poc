@@ -1,0 +1,4 @@
+# PEP 561マーカー。tests/type_fixtures/配下のfixtureファイルをmypyで単体実行する際
+# (test_type_separation.py)、このパッケージの型情報を正しく解決するために必要。
+# これがないと「missing library stubs or py.typed marker」エラーになり、
+# 型分離の検証テスト自体が意図と無関係な理由で失敗する。
