@@ -99,9 +99,12 @@ Step2の`aggregate_observed_logs`は、全エンドポイント×全期間の5�
 - `request_count=0`のバケットは`error_rate=0.0`(エラーが発生していないため)
 - `request_count=0`のバケットは`avg_latency_ms=NaN`(リクエストがなくレイテンシ自体が
   未定義のため0ではない)。Step4でSTL分解に渡す前に補間(interpolate等)が必要
-- Step4で`ground_truth`側もバケット単位に集計する際は、同じグリッド(全エンドポイント×
-  全期間の5分バケット)で0埋めし、`request_count=0`のバケットには明示的に`label=normal`を
-  付与すること。observed側とground_truth側のグリッドがずれると精度評価の結合でミスが起きる
+- `ground_truth`側は`preprocessing.aggregate_ground_truth`で、`aggregate_observed_logs`と
+  同じグリッド(全エンドポイント×全期間の5分バケット)・同じバケット境界(`floor_to_bucket`)で
+  集計している。ラベルは`LABEL_PRIORITY`(anomaly > noise > normal)順に1つに決め、
+  `request_count=0`のバケット(observed側にレコードがない=ground_truth側にも該当行がない)は
+  `reindex`後に明示的に`label=normal`を補完する。observed側とground_truth側は同じグリッドで
+  生成しているため`window_start`・`endpoint`をキーにそのまま結合できる
 
 ## Step4開始時の前提制約
 
@@ -114,24 +117,51 @@ Step1で生成したデータは`LogDataset(observed, ground_truth)`の型で分
 検知関数の型シグネチャは`observed`型(またはそこから導出したメタデータ型)のみを
 受け付ける設計にすること。
 
-### 前提制約2: 既知の未解決事項(Step2からの引き継ぎ)
+### 前提制約2: 既知の未解決事項(Step2からの引き継ぎ、Step4で追加検証済み)
 
 Step1のログ生成テストで、pytest実行時のみ(素のPythonスクリプトループでは
 再現しない)、特定のデータ量で数分間ハングする現象が過去に発生した
 (coverageトレースオーバーヘッドという仮説は検証の結果誤りと判明し、
-根本原因は未特定のまま)。現状はテストの`--days`を1に縮小して回避しているのみ。
-Step4で学習データ量を1週間→2週間→1ヶ月と段階的に拡大する際、同じ現象が
-本番相当のデータ量で再発する可能性がある。大きいデータ量を扱う処理
-(データ生成・前処理・モデル学習等)を追加・実行する際は、都度フォアグラウンドで
-実行時間を計測し、異常な遅延がないか確認しながら進めること。
-数分以上遅延する場合は、勝手にリトライやタイムアウト回避を繰り返さず、
-一度作業を止めて遅延箇所を報告すること。
+根本原因は未特定のまま)。現状はテストの`--days`を1に縮小して回避している。
 
-### 前提制約3: プレースホルダー関数の型シグネチャ維持(Step3からの引き継ぎ)
+Step4でSTL/IsolationForest/matplotlib等の依存関係を追加した後、この現象が
+再発した。追加検証の結果:
 
-Step3で作成した`compute_anomaly_score`(`src/log_anomaly_detection_poc/data_layers.py`)は
-プレースホルダー(0.0を返すのみ)であり、Step4で実際のSTL分解ロジックに置き換える。
-置き換えの際、関数シグネチャ(`Sequence[MetadataRecord] -> list[float]`)を変更しないこと。
-変更する場合は、`tests/type_fixtures/`内の`valid_call.py`・`invalid_call.py`も同時に
-更新し、`tests/test_type_separation.py`が引き続き型分離を正しく検証できることを
-確認すること。
+- `cli.py`(該当テストが経由する唯一の自作モジュール)は`detection.py`を
+  直接・間接問わず一切importしていないことを`python -X importtime`で確認した
+  (合計importtime約300ms、pandasのみ)。Step4の依存関係追加とこの現象は無関係
+- 該当テスト単体10回・フルスイート(coverageなし)3回・フルスイート
+  (coverageあり、`ci_check.sh`と同条件)4回、計17回連続実行して1度も再現しなかった
+  (体感発生率25〜33%という以前の見積りと矛盾しない結果であり、発生率が
+  上がったという証拠ではない)
+
+つまりこの事象は**Step2時点から変わらず未解決のまま**であり、pytest経由でのみ・
+データ量に応じて発生する何かという以上の特定はできていない。今後大きいデータ量を
+扱う処理(データ生成・前処理・モデル学習等)を追加・実行する際は、都度フォアグラウンドで
+実行時間を計測し、異常な遅延がないか確認しながら進めること。数分以上遅延する場合は、
+勝手にリトライやタイムアウト回避を繰り返さず、一度作業を止めて遅延箇所を報告すること。
+
+**次に発生した際に優先すべき調査方針**: 発生率が低く狙って再現させるのが非効率なため、
+「発生した瞬間にその場でスタックトレースを取得する」ことを最優先にする。
+`ci_check.sh`やpytestが30〜60秒以上停止したら、直ちに`ps aux`でPIDを特定し、
+`sudo env "PATH=$PATH" py-spy dump --pid <pid>`(このサンドボックスではptraceが
+制限されているため`sudo`が必要)、またはfaulthandlerベースのウォッチドッグで
+その場のスタックトレースを取得する。単純な追加検証(発生率の再計測や新しい仮説の
+当てずっぽうの検証)を繰り返すのではなく、実際にハングした瞬間の証拠を掴むことが
+次の突破口になる。
+
+## Step4からの引き継ぎ制約
+
+- `evaluate_cli.MIN_REQUEST_COUNT_FOR_EVALUATION`(現在5)は`evaluate_cli.py`内に
+  のみ存在する評価専用の定数であり、`detection.py`の検知関数(`compute_stl_anomaly_score`・
+  `compute_isolation_forest_anomaly_score`)には一切組み込まれていない。実運用の検知
+  パイプラインには影響せず、精度評価の母集団(低トラフィックで統計的に不安定なバケットを
+  除外)を絞るためだけの措置である。Step5のサイレント運用モードを設計する際、この
+  フィルタが「評価専用」であって「検知ロジック自体の一部」ではないことを踏まえること
+- `detection.py`の`compute_stl_anomaly_score`・`compute_isolation_forest_anomaly_score`は
+  ともに`Sequence[MetadataRecord]`のみを受け付ける型シグネチャになっており、
+  `RawDataRecord`を渡すとmypyエラーになることが`tests/type_fixtures/`
+  (`valid_call.py`・`invalid_call.py`)・`tests/test_type_separation.py`で検証済み。
+  Step3で確立した型分離が、実際の検知アルゴリズムを実装したStep4でも維持されている。
+  Step5以降で新しい検知・評価関数を追加する場合も、この型分離を必ず維持し、
+  シグネチャを変更する際はfixture・検証テストを同時に更新すること
