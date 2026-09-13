@@ -67,7 +67,7 @@ IOを伴うロジック（外部API/DBへの呼び出し）と、pureなロジ�
 
 ## 機微情報の扱い
 
-Step7以降でAzure OpenAIのAPIキーを扱う想定のため、この節は有効のまま維持する。
+Step7でAzure OpenAIのAPIキーを実際に扱うようになったため、この節は有効のまま維持する。
 
 APIキー・エンドポイント等の機微情報を、標準出力・ログ・エラーメッセージに含めない。
 
@@ -238,3 +238,37 @@ Step4でSTL/IsolationForest/matplotlib等の依存関係を追加した後、こ
   ただし開示状態(`revealed_scenario_id`)自体はscenario_id単位で管理しているため、
   同じバケットが両アルゴリズムでflaggedの場合は両方の行で開示される(データ内容は
   同一のため誤りではないが、行ごとに独立した開示状態にはしていない)
+
+## Step7からの引き継ぎ制約
+
+- `root_cause.RootCauseAnalysisInput`は`RawDataRecord`から`customer_id`を除いた
+  専用型。「人間が画面上で確認してよい情報」(`RawDataRecord`、Step6)と
+  「外部LLM APIに送信してよい情報」(`RootCauseAnalysisInput`)は別の許可レベルで
+  あり、混同しないこと。`build_root_cause_prompt`の型シグネチャは
+  `Sequence[RootCauseAnalysisInput]`のみを受け付け、`RawDataRecord`を渡すと
+  mypyエラーになる(Step3・Step6と同じ型分離の手法、検証は
+  `tests/test_root_cause_type_separation.py`・`tests/root_cause_type_fixtures/`)。
+  Step8以降でLLMに渡す情報を追加・変更する場合も、この型分離を維持し、
+  「必要最小限か」という基準で都度判断すること
+- `summarize_root_cause(client, deployment_name, prompt)`は`client`とは別に
+  `deployment_name`を明示引数として受け取る設計にしている。当初`os.environ`を
+  関数内で再読込していたが、これは「clientを渡せば完結する」という関数の契約を
+  破っており、pytestでのモック検証(`unittest.mock.Mock`)で実際に検出された
+  (環境変数が設定されていないテスト環境で`KeyError`になった)。IOを伴う関数は
+  必要な情報を全て引数で受け取る設計にし、関数内部で追加の環境依存を持たせない
+  こと
+- `create_azure_openai_client`は環境変数が不足している場合
+  `AzureOpenAIConfigurationError`を送出する。UI(`ui.py`)はこれを捕捉して
+  固定文言(`AZURE_NOT_CONFIGURED_MESSAGE`)のみを表示し、どの環境変数が
+  不足しているかという詳細はログにのみ残す(機微情報の扱い節に準拠)
+- **実Azure OpenAIリソースへの接続確認は未実施**。この時点では認証情報
+  (`AZURE_OPENAI_API_KEY`等)が用意されていないため、`summarize_root_cause`は
+  モック(フェイククライアント)でのみ検証している。`create_azure_openai_client`
+  についても、コンストラクタ自体はネットワーク接続を行わないため、ダミー値での
+  構築確認(`tests/test_root_cause.py`)はしているが、実際にAzure OpenAIへ
+  リクエストを送って応答を得る検証はしていない。Step8以降でこの経路に触れる
+  場合、実リソースでの動作確認がまだ済んでいないことを踏まえること
+- UI(`ui.py`)の3段階目(根本原因分析ボタン)は、Step6の「生データ層を確認する」
+  ボタンで開示された後にのみ表示される。`raw_data_records_for_window`の設計
+  (1バケットのみ変換)をStep7でも維持し、開示済みの`raw_records`をそのまま
+  `to_root_cause_analysis_input`に渡す(観測ログ全体を再度スキャンしない)

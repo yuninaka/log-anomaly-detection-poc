@@ -3,13 +3,13 @@
 AIが機微データ（生ログ・実データ）に一切触れず、メタデータのみで異常の絞り込みを行う、
 という設計思想を実装レベルで検証するPoC。
 
-## アーキテクチャ(Step0〜6の実装範囲と、Step7の計画)
+## アーキテクチャ(Step0〜7の実装範囲)
 
 **AIが扱えるデータ範囲は、Step3で定義した2つのdataclassの型レベルで強制されている**
 (`RawDataRecord`を検知関数に渡すとmypyエラーになる。詳細は
 [メタデータ層と生データ層の型分離(Step3)](#メタデータ層と生データ層の型分離step3)節、
 検証方法は`tests/test_type_separation.py`を参照)。Step5(サイレント運用モード)・
-Step6(人間確認UI)も実装済みで、下図の「人間が扱う範囲」に含まれる。
+Step6(人間確認UI)・Step7(LLM根本原因分析)も実装済みで、下図に含まれる。
 
 ```mermaid
 flowchart LR
@@ -27,6 +27,9 @@ flowchart LR
         SILENT["Step5: サイレント運用モード"]
         UI["Step6: 人間確認UI(2段階開示)"]
     end
+    subgraph LLM["外部LLMが扱う範囲(Step7、実装済み)"]
+        ROOTCAUSE["Step7: 根本原因分析(Azure OpenAI)"]
+    end
 
     R1 -.->|"型レベルで渡せない(mypyエラー)"| STL
     R1 -.->|"型レベルで渡せない(mypyエラー)"| IF
@@ -36,6 +39,7 @@ flowchart LR
     IF --> SILENT
     SILENT --> UI
     UI -->|"生データ層を確認するボタン"| R1
+    R1 -.->|"customer_idは型レベルで渡せない(mypyエラー)<br/>根本原因分析を依頼するボタン押下時のみ"| ROOTCAUSE
 ```
 
 誤検知率(precision/recall)の推移は、実際に学習データ量を変えて測定した実測値であり、
@@ -43,7 +47,10 @@ Mermaidの模式図ではなく[実測結果](#実測結果)の表と`evaluate_c
 上図でStep5・Step6を実装した根拠もこの実測結果にある:
 固定閾値の検知器はrecallは出るがprecisionが8〜13%程度に留まり大半が誤検知という
 結果が出たため、誤検知を運用に流す前にサイレントモードで精度を見極め(Step5)、
-最終判断は人間の確認に委ねる(Step6)という2段構えを実装した。
+最終判断は人間の確認に委ねる(Step6)という2段構えを実装した。Step7のLLMは
+人間が生データ層を確認した後、さらに別のボタンを押した場合にのみ呼び出され、
+`customer_id`を除いた情報のみが送信される(「人間が画面上で確認してよい情報」と
+「外部LLM APIに送信してよい情報」を別の許可レベルとして扱っているため)。
 
 本番運用を想定した場合、Step1のダミーログ生成部分は実際のログ収集層に置き換わる:
 
@@ -281,3 +288,32 @@ Step5のサイレント運用モードが評価した検知結果を人間が確
   押すと、もう一方の行でも同じ生データ層(同一バケットのため内容は同じ)が
   表示される。データの誤りではないが、行ごとに独立した開示状態を持たせる
   設計にはしていない
+
+## LLM根本原因分析(Step7)
+
+Step6のUI上で生データ層を開示した後、さらに「LLMによる根本原因分析を依頼する」
+ボタンを押した場合にのみ、Azure OpenAIに根本原因分析を依頼する。実行には以下の
+環境変数が必要(未設定の場合はエラー詳細を画面に出さず、固定文言のみ表示する):
+
+```bash
+export AZURE_OPENAI_API_KEY="..."
+export AZURE_OPENAI_ENDPOINT="https://<resource>.openai.azure.com"
+export AZURE_OPENAI_DEPLOYMENT_NAME="..."
+export AZURE_OPENAI_API_VERSION="..."
+```
+
+- `root_cause.RootCauseAnalysisInput`: `RawDataRecord`から`customer_id`を除いた
+  専用型。「人間が画面上で確認してよい情報」(Step6)と「外部LLM APIに送信して
+  よい情報」は別の許可レベルであり、根本原因分析という目的に`customer_id`は
+  不要なため、そもそも保持しない設計にしている
+- `root_cause.build_root_cause_prompt`の型シグネチャは`Sequence[RootCauseAnalysisInput]`
+  のみを受け付け、`RawDataRecord`を渡すとmypyエラーになる(Step3・Step6と同じ
+  型分離の手法。検証は`tests/test_root_cause_type_separation.py`)
+- `root_cause.summarize_root_cause`(IOを伴うAzure OpenAI呼び出し)は失敗時、
+  例外の詳細を`logging`モジュールでサーバー側ログにのみ残し、UIには固定文言
+  (`根本原因分析に失敗しました。時間をおいて再度お試しください。`)を返す
+- 結果は永続化しない(Step5・Step6と同じ方針)
+- **実Azure OpenAIリソースへの接続確認は未実施**。この session時点では認証情報が
+  用意されていないため、`summarize_root_cause`はモック(フェイククライアント)
+  でのみ検証している。実際にAzure OpenAIに接続しての動作確認は、利用者が
+  自分の環境で上記環境変数を設定した上で行うこと

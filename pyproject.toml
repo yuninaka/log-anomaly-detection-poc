@@ -9,6 +9,7 @@ requires-python = ">=3.12"
 dependencies = [
     "matplotlib>=3.11.2",
     "numpy>=2.5.3",
+    "openai>=3.13.0",
     "pandas>=3.0.5",
     "scikit-learn>=1.9.1",
     "statsmodels>=0.15.0",
@@ -45,10 +46,11 @@ max-branches = 12
 strict = true
 warn_unreachable = true
 disallow_untyped_defs = true
-# tests/type_fixtures/ は意図的に型エラーを含むfixture(Step3の型分離が
-# 崩れていないことをtest_type_separation.pyがmypyのsubprocess実行で検証する
-# ためのもの)。通常のCI用mypy実行(mypy src tests)からは除外する。
-exclude = ["tests/type_fixtures/"]
+# tests/type_fixtures/・tests/root_cause_type_fixtures/ は意図的に型エラーを
+# 含むfixture(Step3・Step7の型分離が崩れていないことをtest_type_separation.py・
+# test_root_cause_type_separation.pyがmypyのsubprocess実行で検証するためのもの)。
+# 通常のCI用mypy実行(mypy src tests)からは除外する。
+exclude = ["tests/type_fixtures/", "tests/root_cause_type_fixtures/"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
