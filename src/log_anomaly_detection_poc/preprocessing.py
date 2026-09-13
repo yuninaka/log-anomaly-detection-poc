@@ -16,6 +16,11 @@ AGGREGATED_COLUMNS = [
     "request_count",
 ]
 
+GROUND_TRUTH_AGGREGATED_COLUMNS = ["window_start", "endpoint", "label"]
+# anomalyがバケット内に1件でもあればanomaly、なければnoiseが1件でもあればnoise、
+# それ以外はnormalとする優先度(数値が大きいほど優先)。
+LABEL_PRIORITY = {"anomaly": 2, "noise": 1, "normal": 0}
+
 
 def load_observed_csv(path: str) -> pd.DataFrame:
     return pd.read_csv(path, parse_dates=["timestamp"])
@@ -80,6 +85,42 @@ def _compute_error_rate(df: pd.DataFrame) -> pd.DataFrame:
         df["request_count"] > 0, df["error_count"] / df["request_count"], 0.0
     )
     return df.drop(columns=["error_count"])
+
+
+def _assign_ground_truth_buckets(ground_truth: pd.DataFrame, freq: str) -> pd.DataFrame:
+    df = ground_truth.copy()
+    df["window_start"] = floor_to_bucket(df["timestamp"], freq)
+    return df
+
+
+def _dominant_label_per_bucket(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df["_priority"] = df["label"].map(LABEL_PRIORITY)
+    dominant_index = df.groupby(["window_start", "endpoint"])["_priority"].idxmax()
+    return df.loc[dominant_index, ["window_start", "endpoint", "label"]]
+
+
+def aggregate_ground_truth(
+    ground_truth: pd.DataFrame, start: datetime, end: datetime, freq: str = DEFAULT_FREQ
+) -> pd.DataFrame:
+    """Step1の生データ層(request単位のground_truth)をバケット単位に集計する。
+
+    aggregate_observed_logsと同じグリッド・バケット境界を使うため、精度評価で
+    observed側の集計結果(window_start, endpoint)と直接結合できる。バケット内の
+    ラベルはLABEL_PRIORITY順(anomaly > noise > normal)で1つに決める。トラフィックが
+    存在しないバケット(observed側でrequest_count=0)は明示的にnormalとする。
+    """
+    endpoints = (
+        sorted(ground_truth["endpoint"].unique()) if not ground_truth.empty else []
+    )
+    full_index = _full_grid_index(_bucket_starts(start, end, freq), endpoints)
+
+    bucketed = _assign_ground_truth_buckets(ground_truth, freq)
+    dominant = _dominant_label_per_bucket(bucketed)
+    indexed = dominant.set_index(["window_start", "endpoint"])
+    reindexed = indexed.reindex(full_index)
+    reindexed["label"] = reindexed["label"].fillna("normal")
+    return reindexed.reset_index()[GROUND_TRUTH_AGGREGATED_COLUMNS]
 
 
 def aggregate_observed_logs(
