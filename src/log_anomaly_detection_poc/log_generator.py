@@ -104,35 +104,52 @@ def _traffic_multiplier(hour_start: datetime) -> float:
 
 
 def _empty_log_frame() -> pd.DataFrame:
-    return pd.DataFrame(columns=INTERNAL_COLUMNS)
-
-
-def _sample_profiles(n: int, rng: np.random.Generator) -> list[EndpointProfile]:
-    indices = rng.integers(0, len(ENDPOINT_PROFILES), size=n)
-    return [ENDPOINT_PROFILES[i] for i in indices]
-
-
-def _sample_timestamps(
-    hour_start: datetime, n: int, rng: np.random.Generator
-) -> list[datetime]:
-    offsets_seconds = rng.uniform(0, 3600, size=n)
-    return [hour_start + timedelta(seconds=float(s)) for s in offsets_seconds]
-
-
-def _sample_latency(
-    profiles: list[EndpointProfile], rng: np.random.Generator
-) -> np.ndarray:
-    means = np.array([p.mean_latency_ms for p in profiles])
-    stds = np.array([p.std_latency_ms for p in profiles])
-    return np.asarray(
-        rng.lognormal(mean=np.log(means), sigma=stds / means), dtype=float
+    # dtypeを明示しないと全列がobject型になり、空データでも下流のdt.floor等が
+    # datetimelikeでないというAttributeErrorで落ちる。
+    return pd.DataFrame(
+        {
+            "timestamp": pd.Series(dtype="datetime64[ns, UTC]"),
+            "endpoint": pd.Series(dtype="object"),
+            "status_code": pd.Series(dtype="int64"),
+            "latency_ms": pd.Series(dtype="float64"),
+            "label": pd.Series(dtype="object"),
+            "anomaly_type": pd.Series(dtype="object"),
+        }
     )
 
 
-def _sample_status_codes(
-    profiles: list[EndpointProfile], rng: np.random.Generator
-) -> np.ndarray:
-    error_rates = np.array([p.baseline_error_rate for p in profiles])
+_ENDPOINT_NAMES = np.array([p.name for p in ENDPOINT_PROFILES])
+_ENDPOINT_MEAN_LATENCY = np.array([p.mean_latency_ms for p in ENDPOINT_PROFILES])
+_ENDPOINT_STD_LATENCY = np.array([p.std_latency_ms for p in ENDPOINT_PROFILES])
+_ENDPOINT_ERROR_RATE = np.array([p.baseline_error_rate for p in ENDPOINT_PROFILES])
+
+SECONDS_PER_HOUR = 3600
+
+
+def _hour_starts(start: datetime, days: int) -> list[datetime]:
+    return [start + timedelta(hours=h) for h in range(days * 24)]
+
+
+def _expected_requests_per_hour(hour_starts: list[datetime]) -> np.ndarray:
+    multipliers = np.array([_traffic_multiplier(h) for h in hour_starts])
+    return BASE_REQUESTS_PER_HOUR * multipliers
+
+
+def _row_timestamps(
+    hour_starts: list[datetime], counts: np.ndarray, rng: np.random.Generator
+) -> pd.DatetimeIndex:
+    # datetimeオブジェクトを1件ずつPythonループで組み立てるとリクエスト数分の
+    # 行トレースコストがかかるため、numpy/pandasのベクトル演算に寄せている。
+    # DatetimeIndexのままファンシーインデックス・加算すること(.valuesに落とすと
+    # tzinfoが失われてtz-naiveになり、下流のtz-aware比較でTypeErrorになる)。
+    hour_index = np.repeat(np.arange(len(hour_starts)), counts)
+    base = pd.DatetimeIndex(hour_starts)[hour_index]
+    total = int(counts.sum())
+    offsets = pd.to_timedelta(rng.uniform(0, SECONDS_PER_HOUR, size=total), unit="s")
+    return base + offsets
+
+
+def _row_status_codes(error_rates: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     n = len(error_rates)
     is_error = rng.random(n) < error_rates
     ok_codes = rng.choice([200, 201], size=n)
@@ -140,36 +157,41 @@ def _sample_status_codes(
     return np.where(is_error, error_codes, ok_codes)
 
 
-def _generate_hour_requests(
-    hour_start: datetime, rng: np.random.Generator
-) -> pd.DataFrame:
-    expected = BASE_REQUESTS_PER_HOUR * _traffic_multiplier(hour_start)
-    n = int(rng.poisson(expected))
-    if n == 0:
-        return _empty_log_frame()
-
-    profiles = _sample_profiles(n, rng)
-    return pd.DataFrame(
-        {
-            "timestamp": _sample_timestamps(hour_start, n, rng),
-            "endpoint": [p.name for p in profiles],
-            "status_code": _sample_status_codes(profiles, rng).astype(int),
-            "latency_ms": _sample_latency(profiles, rng),
-            "label": ["normal"] * n,
-            "anomaly_type": [None] * n,
-        }
+def _row_latency(
+    means: np.ndarray, stds: np.ndarray, rng: np.random.Generator
+) -> np.ndarray:
+    return np.asarray(
+        rng.lognormal(mean=np.log(means), sigma=stds / means), dtype=float
     )
 
 
 def _generate_baseline_requests(
     start: datetime, days: int, rng: np.random.Generator
 ) -> pd.DataFrame:
-    total_hours = days * 24
-    hours = [start + timedelta(hours=h) for h in range(total_hours)]
-    frames = [_generate_hour_requests(hour, rng) for hour in hours]
-    if not frames:
+    hour_starts = _hour_starts(start, days)
+    if not hour_starts:
         return _empty_log_frame()
-    return pd.concat(frames, ignore_index=True)
+
+    counts = rng.poisson(_expected_requests_per_hour(hour_starts))
+    total = int(counts.sum())
+    if total == 0:
+        return _empty_log_frame()
+
+    profile_indices = rng.integers(0, len(ENDPOINT_PROFILES), size=total)
+    means = _ENDPOINT_MEAN_LATENCY[profile_indices]
+    stds = _ENDPOINT_STD_LATENCY[profile_indices]
+    error_rates = _ENDPOINT_ERROR_RATE[profile_indices]
+
+    return pd.DataFrame(
+        {
+            "timestamp": _row_timestamps(hour_starts, counts, rng),
+            "endpoint": _ENDPOINT_NAMES[profile_indices],
+            "status_code": _row_status_codes(error_rates, rng).astype(int),
+            "latency_ms": _row_latency(means, stds, rng),
+            "label": ["normal"] * total,
+            "anomaly_type": [None] * total,
+        }
+    )
 
 
 def _inject_isolated_noise(df: pd.DataFrame, rng: np.random.Generator) -> pd.DataFrame:
