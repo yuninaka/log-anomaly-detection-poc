@@ -150,6 +150,28 @@ Step4でSTL/IsolationForest/matplotlib等の依存関係を追加した後、こ
 当てずっぽうの検証)を繰り返すのではなく、実際にハングした瞬間の証拠を掴むことが
 次の突破口になる。
 
+**Step6(GitHub Actions CI)で追加観測された事例(2026-09-13)**: PR #16のCI上で
+`tests/test_cli.py::test_main_writes_observed_and_ground_truth_csv`完了から次の
+`test_main_is_reproducible_with_same_seed`完了(失敗)まで**34分43秒**(ジョブ全体では
+2095.63秒)を要した。GitHub Actionsのホスト型ランナーのためpy-spy等でその場の
+スタックトレースは取得できなかった。再実行では49秒で正常終了しており、常時
+発生する劣化ではない。ローカル環境に加えCI環境でも発生することを確認した、
+という点が新しい観測事実。根本原因は依然未特定のまま。
+
+**上記と同時に発生した、別原因の実バグ(修正済み)**: 停止から復帰した直後、
+`test_main_is_reproducible_with_same_seed`自体が実際に失敗した。原因は停止とは
+無関係で、当時の`cli.main()`が`start`を`datetime.now()`由来にしていたにもかかわらず、
+テストが`--start`を指定せず`main()`を2回連続呼び出し「出力が完全一致する」ことを
+検証していたため、2回の呼び出しが実時刻の1秒境界をまたぐと全タイムスタンプが
+1秒ずれ、比較が失敗するという設計上の欠陥だった(失敗した実際の差分は秒の整数部
+のみが1ずれ、ナノ秒以下は完全一致しており、このメカニズムと整合していた)。
+`cli.py`に`--start`(ISO 8601形式)オプションを追加し、`main()`が`start`を注入可能に
+なるよう修正した(省略時のデフォルトは引き続き`datetime.now()`)。
+`test_main_is_reproducible_with_same_seed`は`--start`を明示指定するよう修正し、
+実時刻への依存を完全に排除した。再発防止のため、意図的に1.2秒のsleepを挟んで
+秒境界をまたぐ`test_main_is_reproducible_across_a_real_second_boundary`を追加した
+(5回連続実行で安定してpassすることを確認済み)。
+
 ## Step4からの引き継ぎ制約
 
 - `evaluate_cli.MIN_REQUEST_COUNT_FOR_EVALUATION`(現在5)は`evaluate_cli.py`内に

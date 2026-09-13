@@ -15,6 +15,16 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _parse_start(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            f"{value} はISO 8601形式の日時として解釈できません"
+        ) from error
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
 def _derive_ground_truth_path(output_path: str) -> str:
     path = Path(output_path)
     return str(path.with_name(f"{path.stem}{GROUND_TRUTH_SUFFIX}{path.suffix}"))
@@ -40,6 +50,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_SEED,
         help="乱数シード(同じ値なら常に同一データを生成する)",
     )
+    parser.add_argument(
+        "--start",
+        type=_parse_start,
+        default=None,
+        help=(
+            "生成開始日時(ISO 8601形式、例: 2026-01-05T00:00:00+00:00)。"
+            "省略時は実行時刻(datetime.now())。同じseed・同じstartでのみ"
+            "出力の完全な再現性が保証される"
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -49,7 +69,7 @@ def main(argv: list[str] | None = None) -> None:
         args.output
     )
 
-    start = datetime.now(tz=timezone.utc).replace(microsecond=0)
+    start = args.start or datetime.now(tz=timezone.utc).replace(microsecond=0)
     dataset = generate_logs(start=start, days=args.days, seed=args.seed)
     dataset.observed.to_csv(args.output, index=False)
     dataset.ground_truth.to_csv(ground_truth_output, index=False)
