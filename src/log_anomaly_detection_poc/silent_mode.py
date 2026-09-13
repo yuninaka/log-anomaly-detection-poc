@@ -61,10 +61,16 @@ def decide_production_readiness(
 ) -> SilentModeDecision:
     """サイレントモード期間のprecisionから本番移行可否を判定する。
 
-    precisionがNaN(実異常サンプルが0件など評価不能)の場合と、精度不足で
-    閾値に届かない場合を"reason"で区別する。両方とも
-    ready_for_production=Falseになるが、原因が異なるため人間が読んだときに
-    次に取るべき対応(データを待つのか、検知ロジックを見直すのか)が分かる。
+    resultには、評価対象を絞り込んだ後(MIN_REQUEST_COUNT_FOR_EVALUATION適用後)の
+    PrecisionRecallを渡すこと。フィルタ前の値は低トラフィックバケットの分散不安定性を
+    含んだままであり、本番移行判定には不適切。
+
+    precisionがNaN(TP+FP=0、サイレントモード期間中に陽性判定を一件も出さなかった場合)と、
+    精度不足で閾値に届かない場合を"reason"で区別する。recallがNaN(TP+FN=0、実異常
+    サンプルが0件)かどうかはこの判定に関与しない――precisionが算出できている限り
+    "insufficient_precision"になる。両方ともready_for_production=Falseになるが、
+    原因が異なるため人間が読んだときに次に取るべき対応(データを待つのか、検知ロジックを
+    見直すのか)が分かる。
     """
     if math.isnan(result.precision):
         return SilentModeDecision(

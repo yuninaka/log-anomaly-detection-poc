@@ -173,9 +173,19 @@ Step4でSTL/IsolationForest/matplotlib等の依存関係を追加した後、こ
   決める。まだ使われていない機能のためにスキーマを先回りで拡張しないという、Step1(顧客ID
   ダミーの合成タイミング)・Step3(型分離)以来の一貫した判断
 - `SilentModeDecision.reason`は`"ready"` / `"insufficient_precision"` / `"insufficient_samples"`
-  の3値で、「精度不足で移行不可」と「評価不能(実異常サンプルが0件)で移行不可」を区別する。
-  どちらも`ready_for_production=False`になるが原因が異なるため、Step6のUIでこの判定結果を
-  表示する際は`reason`をそのまま見せ、`ready_for_production`のbool値だけに丸めないこと
+  の3値で、「精度不足で移行不可」と「評価不能で移行不可」を区別する。判定は`result.precision`
+  (`PrecisionRecall.precision`)がNaNかどうかのみで決まる。precisionがNaNになるのは
+  `TP+FP=0`(サイレントモード期間中にアルゴリズムが陽性判定を一件も出さなかった)場合であり、
+  `TP+FN=0`(実異常サンプルが0件、recallがNaNになる条件)とは別の条件である点に注意
+  (14日分の実データはrecallがN/Aだがprecisionは0.000で算出可能だったため
+  `insufficient_precision`になった。recallの評価可否は`decide_production_readiness`の
+  判定に一切関与しない)。どちらのreasonも`ready_for_production=False`になるが原因が
+  異なるため、Step6のUIでこの判定結果を表示する際は`reason`をそのまま見せ、
+  `ready_for_production`のbool値だけに丸めないこと
+- `decide_production_readiness`には`evaluate_cli.py`の`_print_silent_mode_decisions`から
+  `summary["filtered"]`(`MIN_REQUEST_COUNT_FOR_EVALUATION>=5`適用後)の`PrecisionRecall`が
+  渡される。フィルタ前の値を使うとフィルタ前後の意図(低トラフィックバケットの分散不安定性
+  除去)が本番移行判定に混入するため、フィルタ後のみを使う設計
 - 閾値(`DEFAULT_PROMOTION_THRESHOLD=0.5`)に対して、Step4の実測データ(7日/14日/30日いずれも
   STL・IsolationForestともprecision 13%以下)では全て`reason="insufficient_precision"`
   (移行不可)と判定される。これはバグではなく実測結果通りの挙動であり、閾値を恣意的に
