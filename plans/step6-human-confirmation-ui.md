@@ -54,4 +54,19 @@ Issue: #15
 
 ## 実行結果
 
-(実装後に記録)
+`streamlit.testing.v1.AppTest`を使い、実際のウィジェット操作(日数選択→
+「検知を実行する」ボタン→一覧描画→「生データ層を確認する」ボタン)込みで
+ヘッドレス検証した(7日分、seed=42)。
+
+- パイプライン実行時間: 25.3秒(Step4/5の実測値と同水準)
+- flagged件数: 1459件(Step4実測のprecision 8〜13%程度と整合的な、大半が
+  誤検知という結果を反映)
+- 生データ層のボタン押下→該当バケットのみ`RawDataRecord`が表示されることを確認
+
+検証中に実バグを発見・修正した: 同じ`scenario_id`がSTL・IsolationForest両方で
+flaggedになるケースで、ボタンの`key`が重複し`StreamlitDuplicateElementKey`例外が
+発生した。`key`に`algorithm`を含めて一意にすることで解消(CLAUDE.mdに記録済み)。
+
+`./scripts/ci_check.sh`(gitleaks・ruff・mypy・pytest+coverage・vulture・pip-audit)は
+全て通過(pytest 88件、カバレッジ85.61%)。`ui.py`自体はレンダリング層のためカバレッジ
+対象から除外(0%)しているが、AppTestによる手動検証で実際の挙動を確認済み。

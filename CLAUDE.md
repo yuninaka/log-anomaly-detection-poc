@@ -191,3 +191,28 @@ Step4でSTL/IsolationForest/matplotlib等の依存関係を追加した後、こ
   (移行不可)と判定される。これはバグではなく実測結果通りの挙動であり、閾値を恣意的に
   下げて`ready_for_production=True`にするような調整は行っていない。Step6以降でも
   この判定ロジックを甘くする方向の変更をしないこと
+
+## Step6からの引き継ぎ制約
+
+- `ui_logic.py`(pure/オーケストレーション関数)と`ui.py`(Streamlitレンダリングのみの
+  薄い層)を分離している。IOとpureロジックの分離方針(このファイル冒頭)に従い、
+  新しいUIロジックを追加する際もこの分離を維持し、pureな部分はpytestで単体テストする
+  こと。`ui.py`自体はレンダリング層のためpytestでの自動テスト対象外とし、
+  `streamlit run`での実行(または`streamlit.testing.v1.AppTest`でのヘッドレス検証)で
+  動作確認すること
+- `ui_logic.run_detection_pipeline`は`ground_truth`を一切使わない本番相当のパイプライン
+  であり、Step4/5の評価パイプライン(`evaluate_cli.evaluate_at_scale`)とは別物。
+  本番運用に正解ラベルは存在しないという想定を反映しているため、UIに評価用の関数を
+  混用しないこと
+- 生データ層への変換は`data_layers.raw_data_records_for_window`(1バケットのみ変換)を
+  使い、`to_raw_data_records`(観測ログ全体を無条件変換)はUIから直接呼ばないこと。
+  「人間が明示的に確認を選択した場合にのみ生データ層に触れる」という設計をコードの
+  フローとして保証するため
+- `SilentModeRecord`は`scenario_id`のみを持ちmodule_name/window_startを持たないため、
+  UI側で`ui_logic.metadata_by_scenario_id`を使ってMetadataRecordを引く。同じ
+  `scenario_id`がSTL・IsolationForest両方でflaggedになりうるため、Streamlitの
+  ウィジェットkeyには`scenario_id`だけでなく`algorithm`も含めて一意にすること
+  (実際に`AppTest`での検証中に`StreamlitDuplicateElementKey`で発覚した実バグ)。
+  ただし開示状態(`revealed_scenario_id`)自体はscenario_id単位で管理しているため、
+  同じバケットが両アルゴリズムでflaggedの場合は両方の行で開示される(データ内容は
+  同一のため誤りではないが、行ごとに独立した開示状態にはしていない)
