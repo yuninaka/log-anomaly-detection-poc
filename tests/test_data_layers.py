@@ -5,6 +5,7 @@ import pandas as pd
 from log_anomaly_detection_poc.data_layers import (
     MetadataRecord,
     RawDataRecord,
+    raw_data_records_for_window,
     to_metadata_records,
     to_raw_data_records,
 )
@@ -117,3 +118,69 @@ def test_raw_and_metadata_scenario_ids_correspond_to_the_same_bucket() -> None:
     metadata_scenario_ids = {r.scenario_id for r in metadata_records}
     raw_scenario_ids = {r.scenario_id for r in raw_records}
     assert raw_scenario_ids.issubset(metadata_scenario_ids)
+
+
+def _two_bucket_observed() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "timestamp": START,
+                "endpoint": "/api/login",
+                "status_code": 200,
+                "latency_ms": 100.0,
+            },
+            {
+                "timestamp": START + timedelta(minutes=5),
+                "endpoint": "/api/login",
+                "status_code": 200,
+                "latency_ms": 110.0,
+            },
+            {
+                "timestamp": START,
+                "endpoint": "/api/orders",
+                "status_code": 200,
+                "latency_ms": 90.0,
+            },
+        ]
+    )
+
+
+def test_raw_data_records_for_window_only_returns_matching_bucket() -> None:
+    records = raw_data_records_for_window(_two_bucket_observed(), "/api/login", START)
+
+    assert len(records) == 1
+    assert records[0].timestamp == START
+    assert records[0].endpoint == "/api/login"
+
+
+def test_raw_data_records_for_window_excludes_other_endpoints() -> None:
+    records = raw_data_records_for_window(_two_bucket_observed(), "/api/login", START)
+
+    assert all(r.endpoint == "/api/login" for r in records)
+
+
+def test_raw_data_records_for_window_no_match_returns_empty_list() -> None:
+    records = raw_data_records_for_window(
+        _two_bucket_observed(), "/api/login", START + timedelta(hours=1)
+    )
+
+    assert records == []
+
+
+def test_raw_data_records_for_window_at_bucket_boundary() -> None:
+    boundary_observed = pd.DataFrame(
+        [
+            {
+                "timestamp": START + timedelta(minutes=5),
+                "endpoint": "/api/login",
+                "status_code": 200,
+                "latency_ms": 100.0,
+            }
+        ]
+    )
+
+    records = raw_data_records_for_window(
+        boundary_observed, "/api/login", START + timedelta(minutes=5)
+    )
+
+    assert len(records) == 1

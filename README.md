@@ -3,13 +3,13 @@
 AIが機微データ（生ログ・実データ）に一切触れず、メタデータのみで異常の絞り込みを行う、
 という設計思想を実装レベルで検証するPoC。
 
-## アーキテクチャ(Step0〜4の実装範囲と、Step5〜7の計画)
+## アーキテクチャ(Step0〜6の実装範囲と、Step7の計画)
 
 **AIが扱えるデータ範囲は、Step3で定義した2つのdataclassの型レベルで強制されている**
 (`RawDataRecord`を検知関数に渡すとmypyエラーになる。詳細は
 [メタデータ層と生データ層の型分離(Step3)](#メタデータ層と生データ層の型分離step3)節、
 検証方法は`tests/test_type_separation.py`を参照)。Step5(サイレント運用モード)・
-Step6(人間確認UI)はまだ未実装で、下図では計画中として区別している。
+Step6(人間確認UI)も実装済みで、下図の「人間が扱う範囲」に含まれる。
 
 ```mermaid
 flowchart LR
@@ -23,7 +23,7 @@ flowchart LR
         STL["Step4: STL分解"]
         IF["Step4: IsolationForest"]
     end
-    subgraph HUMAN["人間が扱う範囲(Step5・Step6、未実装・計画中)"]
+    subgraph HUMAN["人間が扱う範囲(Step5・Step6、実装済み)"]
         SILENT["Step5: サイレント運用モード"]
         UI["Step6: 人間確認UI(2段階開示)"]
     end
@@ -40,10 +40,10 @@ flowchart LR
 
 誤検知率(precision/recall)の推移は、実際に学習データ量を変えて測定した実測値であり、
 Mermaidの模式図ではなく[実測結果](#実測結果)の表と`evaluate_cli.py`の実行結果を参照。
-上図でStep5・Step6を「計画中」としているのはこの実測結果が根拠になっている:
+上図でStep5・Step6を実装した根拠もこの実測結果にある:
 固定閾値の検知器はrecallは出るがprecisionが8〜13%程度に留まり大半が誤検知という
 結果が出たため、誤検知を運用に流す前にサイレントモードで精度を見極め(Step5)、
-最終判断は人間の確認に委ねる(Step6)という2段構えが必要になった。
+最終判断は人間の確認に委ねる(Step6)という2段構えを実装した。
 
 本番運用を想定した場合、Step1のダミーログ生成部分は実際のログ収集層に置き換わる:
 
@@ -102,6 +102,10 @@ uv run python -m log_anomaly_detection_poc --days 20 --output data/logs.csv --se
 
 - `--days` は任意の正の整数を指定できる(1週間=7・2週間=14・1ヶ月=30 に限定されない)
 - `--seed` を固定すると常に同一データが生成される(デフォルト42)
+- `--start`(ISO 8601形式、例: `2026-01-05T00:00:00+00:00`)を指定すると生成開始日時を
+  固定できる。**省略時は実行時刻(`datetime.now()`)を使うため、同じ`--seed`でも
+  実行するたびに出力のタイムスタンプが変わる**。出力の完全な再現性が必要な場合
+  (テスト等)は`--seed`と`--start`の両方を固定すること
 - 出力は2ファイルに分離される
   - `--output` で指定したファイル: 観測ログ(`timestamp`/`endpoint`/`status_code`/`latency_ms`)。
     検知パイプラインに渡してよいのはこちらのみ
@@ -217,3 +221,63 @@ uv run python -m log_anomaly_detection_poc.evaluate_cli --show-progress
 - `MIN_REQUEST_COUNT_FOR_EVALUATION`は`evaluate_cli.py`(評価専用)にのみ存在し、
   `detection.py`の検知関数には組み込まれていない。実運用の検知パイプラインには
   影響しない、精度評価の母集団を絞るだけの措置
+
+## サイレント運用モード(Step5)
+
+```bash
+uv run python -m log_anomaly_detection_poc.evaluate_cli --show-progress
+```
+
+Step4の精度評価パイプラインに統合されており、実行すると日数・アルゴリズムごとに
+「本番トリアージフローへの移行可否」の判定結果も出力される。
+
+- `silent_mode.accumulate_silent_mode_records`: 検知スコアを蓄積するだけの純粋関数。
+  通知(print・アラート送信等)の副作用を一切持たないことで「検知結果を即座に
+  通知しない」ことを関数の契約自体で保証する(Step3の型分離と同じ発想)
+- `silent_mode.decide_production_readiness`: サイレントモード期間の`precision`
+  (**フィルタ後**、`MIN_REQUEST_COUNT_FOR_EVALUATION>=5`適用後の値を使う)が
+  閾値(デフォルト50%)以上なら`reason="ready"`、閾値未満なら
+  `reason="insufficient_precision"`と判定する。`precision`がNaN
+  (`TP+FP=0`、サイレントモード期間中に陽性判定を一件も出さなかった場合)は
+  `reason="insufficient_samples"`と区別する。`TP+FN=0`(実異常サンプルが0件、
+  recallがNaNになる条件)は`insufficient_samples`の判定には関与しない
+  (recallの評価可否とprecisionの評価可否は別軸)
+- 永続化(CSV/JSON出力、DB保存等)は一切行わない。Step6の人間確認UIが実際に
+  必要とするデータ形式が固まってから検討するという、Step1(顧客IDダミーの
+  合成タイミング)・Step3(型分離)以来の一貫した判断
+- 閾値50%に対して、Step4の実測データ(7日/14日/30日いずれもSTL・
+  IsolationForestともprecision 13%以下)では全て`reason="insufficient_precision"`
+  (移行不可)と判定される。これはバグではなく実測結果通りの挙動であり、閾値を
+  恣意的に下げるような調整は行っていない
+
+## 人間確認UI(Step6)
+
+```bash
+uv run streamlit run src/log_anomaly_detection_poc/ui.py
+```
+
+Step5のサイレント運用モードが評価した検知結果を人間が確認するUI。Step3で確立した
+型分離をUIのフローレベルでも維持し、生データ層は人間が明示的に選択した場合にのみ
+表示する2段階開示にしている。
+
+- `ui_logic.py`(pure/オーケストレーション関数、pytestで単体テスト)と
+  `ui.py`(Streamlitレンダリングのみの薄い層、`streamlit run`で手動確認)に分離
+- `ui_logic.run_detection_pipeline`は本番相当のパイプライン(`generate_logs` →
+  `aggregate_observed_logs` → `to_metadata_records` → 検知スコア →
+  `accumulate_silent_mode_records`)を実行する。Step4/5の評価パイプライン
+  (`evaluate_cli.evaluate_at_scale`)とは異なり`ground_truth`を一切使わない
+  (本番運用に正解ラベルは存在しないため)
+- 第1段階: `flagged=True`のメタデータ層一覧を表示する(`scenario_id`・
+  `module_name`・`window_start`・`algorithm`・`score`のみ)
+- 第2段階: 各行の「生データ層を確認する」ボタンを押した場合のみ
+  `data_layers.raw_data_records_for_window`を呼び出し、該当バケットのみを
+  `RawDataRecord`に変換して表示する。既存の`to_raw_data_records`は観測ログ
+  全体を無条件で変換するためUIからは使わない
+- 学習データ量は`[7, 14, 30]`日の中から選択する(Step4で所要時間・精度を
+  実測済みの値に限定。他の値は所要時間の実績がないため選択肢に含めない)。
+  実行には数十秒〜数分かかるため、実行中は明確なローディング表示を出す
+- 同じ`scenario_id`がSTL・IsolationForest両方でflaggedになることがあり、
+  その場合は一覧に2行表示される。どちらか一方の「生データ層を確認する」を
+  押すと、もう一方の行でも同じ生データ層(同一バケットのため内容は同じ)が
+  表示される。データの誤りではないが、行ごとに独立した開示状態を持たせる
+  設計にはしていない

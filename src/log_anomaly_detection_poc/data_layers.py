@@ -114,3 +114,22 @@ def to_raw_data_records(
         strict=True,
     )
     return [_build_raw_record(*row) for row in rows]
+
+
+def raw_data_records_for_window(
+    observed: pd.DataFrame,
+    module_name: str,
+    window_start: datetime,
+    freq: str = DEFAULT_FREQ,
+    seed: int = 0,
+) -> list[RawDataRecord]:
+    """指定した1バケット(module_name+window_start)のみを生データ層に変換する。
+
+    to_raw_data_recordsは観測ログ全体を無条件で変換するため、Step6のUIからは
+    使わない(人間が明示的に確認を選択していないバケットまで生データ層に触れて
+    しまうため)。この関数を使うことで、「人間が明示的に確認を選択した場合にのみ」
+    生データ層への変換自体が発生することをコードのフローとして保証する。
+    """
+    matches_endpoint = observed["endpoint"] == module_name
+    matches_window = floor_to_bucket(observed["timestamp"], freq) == window_start
+    return to_raw_data_records(observed[matches_endpoint & matches_window], freq, seed)
