@@ -1,6 +1,10 @@
 from datetime import datetime, timezone
 
-from log_anomaly_detection_poc.data_layers import MetadataRecord, compute_anomaly_score
+from log_anomaly_detection_poc.data_layers import MetadataRecord
+from log_anomaly_detection_poc.detection import (
+    compute_isolation_forest_anomaly_score,
+    compute_stl_anomaly_score,
+)
 
 record = MetadataRecord(
     scenario_id="dummy",
@@ -11,4 +15,5 @@ record = MetadataRecord(
     request_count=1,
 )
 
-compute_anomaly_score([record])
+compute_stl_anomaly_score([record])
+compute_isolation_forest_anomaly_score([record])

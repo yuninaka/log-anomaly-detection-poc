@@ -5,6 +5,8 @@ import pytest
 
 from log_anomaly_detection_poc.preprocessing import (
     AGGREGATED_COLUMNS,
+    GROUND_TRUTH_AGGREGATED_COLUMNS,
+    aggregate_ground_truth,
     aggregate_observed_logs,
 )
 
@@ -155,3 +157,92 @@ def test_grid_covers_the_full_requested_period() -> None:
     assert len(result) == expected_buckets_per_endpoint
     assert result["window_start"].min() == START
     assert result["window_start"].max() == end - timedelta(minutes=5)
+
+
+def _ground_truth_row(
+    offset_seconds: float, endpoint: str, label: str
+) -> dict[str, object]:
+    return {
+        "timestamp": START + timedelta(seconds=offset_seconds),
+        "endpoint": endpoint,
+        "label": label,
+        "anomaly_type": None,
+    }
+
+
+def _empty_ground_truth() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "timestamp": pd.Series(dtype="datetime64[ns, UTC]"),
+            "endpoint": pd.Series(dtype="object"),
+            "label": pd.Series(dtype="object"),
+            "anomaly_type": pd.Series(dtype="object"),
+        }
+    )
+
+
+def test_aggregate_ground_truth_empty_input_produces_empty_result() -> None:
+    result = aggregate_ground_truth(
+        _empty_ground_truth(), start=START, end=START, freq=FREQ
+    )
+
+    assert result.empty
+    assert list(result.columns) == GROUND_TRUTH_AGGREGATED_COLUMNS
+
+
+def test_aggregate_ground_truth_bucket_without_traffic_is_normal() -> None:
+    ground_truth = pd.DataFrame([_ground_truth_row(0, "/api/login", "normal")])
+    end = START + timedelta(minutes=15)
+
+    result = aggregate_ground_truth(ground_truth, start=START, end=end, freq=FREQ)
+    login = result[result["endpoint"] == "/api/login"].sort_values("window_start")
+
+    assert len(login) == THREE_BUCKETS
+    assert (login["label"] == "normal").all()
+
+
+def test_aggregate_ground_truth_anomaly_takes_priority_over_noise() -> None:
+    ground_truth = pd.DataFrame(
+        [
+            _ground_truth_row(0, "/api/login", "noise"),
+            _ground_truth_row(1, "/api/login", "anomaly"),
+            _ground_truth_row(2, "/api/login", "normal"),
+        ]
+    )
+    end = START + timedelta(minutes=5)
+
+    result = aggregate_ground_truth(ground_truth, start=START, end=end, freq=FREQ)
+
+    row = result[result["endpoint"] == "/api/login"].iloc[0]
+    assert row["label"] == "anomaly"
+
+
+def test_aggregate_ground_truth_noise_takes_priority_over_normal() -> None:
+    ground_truth = pd.DataFrame(
+        [
+            _ground_truth_row(0, "/api/login", "normal"),
+            _ground_truth_row(1, "/api/login", "noise"),
+        ]
+    )
+    end = START + timedelta(minutes=5)
+
+    result = aggregate_ground_truth(ground_truth, start=START, end=end, freq=FREQ)
+
+    row = result[result["endpoint"] == "/api/login"].iloc[0]
+    assert row["label"] == "noise"
+
+
+def test_aggregate_ground_truth_grid_matches_observed_grid() -> None:
+    observed = pd.DataFrame([_observed_row(0, "/api/login", 200, 100.0)])
+    ground_truth = pd.DataFrame([_ground_truth_row(0, "/api/login", "normal")])
+    end = START + timedelta(days=1)
+
+    observed_result = aggregate_observed_logs(observed, start=START, end=end, freq=FREQ)
+    ground_truth_result = aggregate_ground_truth(
+        ground_truth, start=START, end=end, freq=FREQ
+    )
+
+    merged = observed_result.merge(
+        ground_truth_result, on=["window_start", "endpoint"], how="inner"
+    )
+    assert len(merged) == len(observed_result) == len(ground_truth_result)

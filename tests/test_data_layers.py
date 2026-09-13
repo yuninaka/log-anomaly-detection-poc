@@ -5,7 +5,6 @@ import pandas as pd
 from log_anomaly_detection_poc.data_layers import (
     MetadataRecord,
     RawDataRecord,
-    compute_anomaly_score,
     to_metadata_records,
     to_raw_data_records,
 )
@@ -118,15 +117,3 @@ def test_raw_and_metadata_scenario_ids_correspond_to_the_same_bucket() -> None:
     metadata_scenario_ids = {r.scenario_id for r in metadata_records}
     raw_scenario_ids = {r.scenario_id for r in raw_records}
     assert raw_scenario_ids.issubset(metadata_scenario_ids)
-
-
-def test_compute_anomaly_score_returns_one_score_per_record() -> None:
-    records = to_metadata_records(_aggregated_frame())
-
-    scores = compute_anomaly_score(records)
-
-    assert len(scores) == len(records)
-
-
-def test_compute_anomaly_score_handles_empty_input() -> None:
-    assert compute_anomaly_score([]) == []

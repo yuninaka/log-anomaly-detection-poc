@@ -1,4 +1,3 @@
-from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -115,13 +114,3 @@ def to_raw_data_records(
         strict=True,
     )
     return [_build_raw_record(*row) for row in rows]
-
-
-def compute_anomaly_score(metadata: Sequence[MetadataRecord]) -> list[float]:
-    """型分離の検証専用のプレースホルダー。
-
-    実際の異常検知ロジック(STL分解・IsolationForest)はStep4で実装する。
-    ここでの目的は「メタデータ層のオブジェクトしか受け取れない」という
-    型シグネチャの制約そのものであり、検知精度は一切問わない。
-    """
-    return [0.0 for _ in metadata]
