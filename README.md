@@ -3,6 +3,70 @@
 AIが機微データ（生ログ・実データ）に一切触れず、メタデータのみで異常の絞り込みを行う、
 という設計思想を実装レベルで検証するPoC。
 
+## アーキテクチャ(Step0〜4の実装範囲と、Step5〜7の計画)
+
+**AIが扱えるデータ範囲は、Step3で定義した2つのdataclassの型レベルで強制されている**
+(`RawDataRecord`を検知関数に渡すとmypyエラーになる。詳細は
+[メタデータ層と生データ層の型分離(Step3)](#メタデータ層と生データ層の型分離step3)節、
+検証方法は`tests/test_type_separation.py`を参照)。Step5(サイレント運用モード)・
+Step6(人間確認UI)はまだ未実装で、下図では計画中として区別している。
+
+```mermaid
+flowchart LR
+    subgraph RAW["生データ層(機微) - RawDataRecord"]
+        R1["timestamp / endpoint / status_code<br/>latency_ms / customer_id"]
+    end
+    subgraph META["メタデータ層 - MetadataRecord"]
+        M1["scenario_id / module_name / window_start<br/>avg_latency_ms / error_rate / request_count"]
+    end
+    subgraph AI["AIが扱う範囲(Step3で型レベルに強制・実装済み)"]
+        STL["Step4: STL分解"]
+        IF["Step4: IsolationForest"]
+    end
+    subgraph HUMAN["人間が扱う範囲(Step5・Step6、未実装・計画中)"]
+        SILENT["Step5: サイレント運用モード"]
+        UI["Step6: 人間確認UI(2段階開示)"]
+    end
+
+    R1 -.->|"型レベルで渡せない(mypyエラー)"| STL
+    R1 -.->|"型レベルで渡せない(mypyエラー)"| IF
+    M1 --> STL
+    M1 --> IF
+    STL --> SILENT
+    IF --> SILENT
+    SILENT --> UI
+    UI -->|"生データ層を確認するボタン"| R1
+```
+
+誤検知率(precision/recall)の推移は、実際に学習データ量を変えて測定した実測値であり、
+Mermaidの模式図ではなく[実測結果](#実測結果)の表と`evaluate_cli.py`の実行結果を参照。
+上図でStep5・Step6を「計画中」としているのはこの実測結果が根拠になっている:
+固定閾値の検知器はrecallは出るがprecisionが8〜13%程度に留まり大半が誤検知という
+結果が出たため、誤検知を運用に流す前にサイレントモードで精度を見極め(Step5)、
+最終判断は人間の確認に委ねる(Step6)という2段構えが必要になった。
+
+本番運用を想定した場合、Step1のダミーログ生成部分は実際のログ収集層に置き換わる:
+
+```mermaid
+flowchart LR
+    subgraph PROD["本番運用イメージ(接続イメージのみ、未実装)"]
+        FB["Fluent Bit / OpenTelemetry<br/>(後付け計装)"]
+    end
+    subgraph POC["このPoC(Step0〜4で実装済み)"]
+        GEN["Step1: ログ生成(ダミー)"]
+        AGG["Step2: 5分単位集計"]
+        SPLIT["Step3: 型分離"]
+        DET["Step4: 検知・評価"]
+    end
+
+    FB -->|"アクセスログ(観測ログ相当)"| GEN
+    GEN --> AGG --> SPLIT --> DET
+```
+
+Fluent Bit/OpenTelemetry側は観測ログ(`timestamp`/`endpoint`/`status_code`/`latency_ms`)
+相当の情報のみを流し、顧客IDなどの機微情報を含む生データ層は収集パイプラインの別経路
+(生データストア)に留め、AI側の検知パイプラインには接続しない設計を想定している。
+
 ## セットアップ
 
 ```bash
@@ -128,6 +192,8 @@ uv run python -m log_anomaly_detection_poc.evaluate_cli --show-progress
 安定せず誤検知の主因になるため、評価対象を`request_count>=5`(「統計的に安定する
 最低限のサンプル数」という独立基準。precision最大化のための閾値探索ではない)に
 絞ったフィルタ適用前後の両方を記録している。
+
+各セルは **フィルタ前→フィルタ後**(`request_count>=5`)の値。
 
 | 日数 | 所要時間 | STL precision | STL recall | IsolationForest precision | IsolationForest recall |
 |---|---|---|---|---|---|
