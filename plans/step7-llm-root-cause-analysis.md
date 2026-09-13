@@ -67,4 +67,25 @@ Issue: #17
 
 ## 実行結果
 
-(実装後に記録)
+`streamlit.testing.v1.AppTest`で実際のウィジェット操作(日数選択→検知実行→
+生データ層開示→根本原因分析依頼)込みでヘッドレス検証した(7日分、seed=42、
+認証情報未設定の状態)。
+
+- 「LLMによる根本原因分析を依頼する」ボタン押下→`AzureOpenAIConfigurationError`
+  →固定文言(`Azure OpenAIの接続設定が完了していないため、根本原因分析を実行
+  できません。`)がUIに表示されることを確認。詳細(不足している環境変数名)は
+  ログにのみ出力され、UIには一切表示されないことも確認した
+- 同じscenario_idがSTL・IsolationForest両方でflaggedの場合、両方の行で同じ
+  フォールバックメッセージが表示されることを確認(Step6の開示状態共有の設計と
+  一貫した挙動)
+
+実装中に実バグを1件発見・修正した: `summarize_root_cause`が当初`client`とは別に
+`os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"]`を関数内で再読込しており、
+`unittest.mock.Mock`によるモックテストでテスト環境に環境変数がないため`KeyError`
+になった。`deployment_name`を明示引数にすることで解消(CLAUDE.mdに記録済み)。
+
+`./scripts/ci_check.sh`(gitleaks・ruff・mypy・pytest+coverage・vulture・pip-audit)は
+全て通過(pytest 107件、カバレッジ84.05%、`root_cause.py`単体は100%)。
+
+**実Azure OpenAIリソースへの接続確認は未実施**(計画時点で明記した通り)。認証情報が
+用意され次第、利用者が自分の環境で動作確認を行うこと。
