@@ -126,6 +126,31 @@ def test_summarize_root_cause_returns_fallback_on_empty_content() -> None:
     assert result == FALLBACK_MESSAGE
 
 
+def test_summarize_root_cause_returns_fallback_on_empty_choices_list() -> None:
+    # API呼び出し自体は例外を投げないが、コンテンツフィルタ等でchoicesが
+    # 空リストになるケース(実際のAzure OpenAIで起こりうる)。
+    # response.choices[0]がIndexErrorを起こし、tryの外で未捕捉のまま
+    # UIまで伝播しないことを確認する回帰テスト。
+    client = Mock()
+    client.chat.completions.create.return_value.choices = []
+
+    result = summarize_root_cause(client, DEPLOYMENT_NAME, "dummy prompt")
+
+    assert result == FALLBACK_MESSAGE
+
+
+def test_summarize_root_cause_returns_fallback_on_missing_message_attribute() -> None:
+    # 想定外のレスポンス構造(messageを持たない)でAttributeErrorになる
+    # ケースも未捕捉のまま伝播しないことを確認する。
+    client = Mock()
+    choice = Mock(spec=[])  # messageもcontentも持たないダミー
+    client.chat.completions.create.return_value.choices = [choice]
+
+    result = summarize_root_cause(client, DEPLOYMENT_NAME, "dummy prompt")
+
+    assert result == FALLBACK_MESSAGE
+
+
 def test_create_azure_openai_client_raises_when_env_vars_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

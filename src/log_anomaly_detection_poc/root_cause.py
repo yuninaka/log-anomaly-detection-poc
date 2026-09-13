@@ -125,6 +125,11 @@ def summarize_root_cause(client: AzureOpenAI, deployment_name: str, prompt: str)
 
     失敗時は例外の詳細をログにのみ残し、呼び出し元には固定文言を返す
     (CLAUDE.mdの機微情報の扱い節: ユーザー向け画面には固定文言のみ表示する)。
+    API呼び出し自体が例外を投げるケースだけでなく、例外は投げないが
+    期待と異なる形式のレスポンス(例: コンテンツフィルタ等でchoicesが
+    空になる場合)も同じtry節で扱い、フォールバックに倒す。レスポンスの
+    解釈をtry節の外に置くと、この種の応答がIndexError/AttributeErrorとして
+    未捕捉のままUIまで伝播してしまう。
     """
     try:
         response = client.chat.completions.create(
@@ -134,9 +139,9 @@ def summarize_root_cause(client: AzureOpenAI, deployment_name: str, prompt: str)
                 {"role": "user", "content": prompt},
             ],
         )
+        content = response.choices[0].message.content
     except Exception:
         logger.exception("Azure OpenAIへの根本原因分析リクエストに失敗しました")
         return FALLBACK_MESSAGE
 
-    content = response.choices[0].message.content
     return content if content else FALLBACK_MESSAGE
