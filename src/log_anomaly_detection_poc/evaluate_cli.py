@@ -27,6 +27,11 @@ from log_anomaly_detection_poc.preprocessing import (  # noqa: E402
     aggregate_ground_truth,
     aggregate_observed_logs,
 )
+from log_anomaly_detection_poc.silent_mode import (  # noqa: E402
+    DEFAULT_PROMOTION_THRESHOLD,
+    SilentModeDecision,
+    decide_production_readiness,
+)
 
 # 日本語ラベルを描画するため、CJK対応フォントを優先する(なければDejaVu Sansに
 # フォールバックし、グリフ欠落の警告付きで英数字以外が表示されなくなる)。
@@ -144,6 +149,23 @@ def _print_summary(
     )
 
 
+REASON_LABELS: dict[str, str] = {
+    "ready": "移行可能",
+    "insufficient_precision": "精度不足",
+    "insufficient_samples": "評価不能(実異常サンプルなし)",
+}
+
+
+def _print_silent_mode_decisions(filtered: dict[str, PrecisionRecall]) -> None:
+    threshold = DEFAULT_PROMOTION_THRESHOLD
+    print(f"  [サイレント運用: 本番移行判定(閾値precision>={threshold})]")
+    for algorithm, result in filtered.items():
+        decision: SilentModeDecision = decide_production_readiness(algorithm, result)
+        label = REASON_LABELS[decision.reason]
+        precision = _format_ratio(decision.precision)
+        print(f"    {algorithm}: {label}(precision={precision})")
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="学習データ量ごとにSTL/IsolationForestの精度を評価する"
@@ -166,6 +188,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         summary = summarize(merged)
         _print_summary(days, time.time() - start_time, summary)
+        _print_silent_mode_decisions(summary["filtered"])
         filtered_results[days] = summary["filtered"]
 
     plot_precision_by_days(filtered_results, args.output)

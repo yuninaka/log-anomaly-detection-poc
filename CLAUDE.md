@@ -165,3 +165,19 @@ Step4でSTL/IsolationForest/matplotlib等の依存関係を追加した後、こ
   Step3で確立した型分離が、実際の検知アルゴリズムを実装したStep4でも維持されている。
   Step5以降で新しい検知・評価関数を追加する場合も、この型分離を必ず維持し、
   シグネチャを変更する際はfixture・検証テストを同時に更新すること
+
+## Step5からの引き継ぎ制約
+
+- `silent_mode.py`は永続化(CSV/JSON出力、DB保存等)を一切行わない。Step6の人間確認UIが
+  実際にどんな形式(単なるオンメモリのリスト、SQLite等)を必要とするかはStep6の設計時に
+  決める。まだ使われていない機能のためにスキーマを先回りで拡張しないという、Step1(顧客ID
+  ダミーの合成タイミング)・Step3(型分離)以来の一貫した判断
+- `SilentModeDecision.reason`は`"ready"` / `"insufficient_precision"` / `"insufficient_samples"`
+  の3値で、「精度不足で移行不可」と「評価不能(実異常サンプルが0件)で移行不可」を区別する。
+  どちらも`ready_for_production=False`になるが原因が異なるため、Step6のUIでこの判定結果を
+  表示する際は`reason`をそのまま見せ、`ready_for_production`のbool値だけに丸めないこと
+- 閾値(`DEFAULT_PROMOTION_THRESHOLD=0.5`)に対して、Step4の実測データ(7日/14日/30日いずれも
+  STL・IsolationForestともprecision 13%以下)では全て`reason="insufficient_precision"`
+  (移行不可)と判定される。これはバグではなく実測結果通りの挙動であり、閾値を恣意的に
+  下げて`ready_for_production=True`にするような調整は行っていない。Step6以降でも
+  この判定ロジックを甘くする方向の変更をしないこと

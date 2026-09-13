@@ -116,7 +116,9 @@ uv run python -m log_anomaly_detection_poc --days 20 --output data/logs.csv --se
 ```python
 from log_anomaly_detection_poc.preprocessing import aggregate_observed_logs
 
-aggregated = aggregate_observed_logs(dataset.observed, start=start, end=end, freq="5min")
+aggregated = aggregate_observed_logs(
+    dataset.observed, start=start, end=end, freq="5min"
+)
 ```
 
 - 観測ログを `endpoint × 5分バケット` に集計し、`window_start`・`endpoint`・
