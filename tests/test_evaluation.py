@@ -1,3 +1,5 @@
+import math
+
 import pytest
 
 from log_anomaly_detection_poc.evaluation import (
@@ -43,18 +45,21 @@ def test_precision_recall_with_false_positive_and_false_negative() -> None:
     assert result.recall == pytest.approx(0.5)
 
 
-def test_precision_recall_no_predicted_positives_is_zero_not_division_error() -> None:
+def test_precision_recall_no_predicted_positives_precision_is_nan_not_error() -> None:
+    # 1件も陽性判定しなかった場合、precisionの分母(TP+FP)が0になり評価不能。
+    # 「0%」と誤読されないよう0.0ではなくNaNを返す(0除算エラーにもしない)。
     result = precision_recall(predicted=[False, False], actual=[True, False])
 
-    assert result.precision == 0.0
-    assert result.recall == 0.0
+    assert math.isnan(result.precision)
+    assert result.recall == 0.0  # 実異常1件を見逃したという実際の0%
 
 
-def test_precision_recall_no_actual_positives_recall_is_zero() -> None:
+def test_precision_recall_no_actual_positives_recall_is_nan_not_error() -> None:
+    # 実異常が1件も存在しない場合、recallの分母(TP+FN)が0になり評価不能。
     result = precision_recall(predicted=[True, False], actual=[False, False])
 
-    assert result.recall == 0.0
-    assert result.precision == 0.0
+    assert math.isnan(result.recall)
+    assert result.precision == 0.0  # 唯一の陽性判定が誤りだったという実際の0%
 
 
 def test_precision_recall_mismatched_length_raises() -> None:

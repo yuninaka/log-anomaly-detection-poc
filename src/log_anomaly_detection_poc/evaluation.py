@@ -45,7 +45,10 @@ def precision_recall(
 
 
 def _safe_ratio(numerator: int, denominator: int) -> float:
-    return numerator / denominator if denominator > 0 else 0.0
+    # 分母が0の場合は「0%」ではなく「評価不能」なのでNaNを返す(例: 実異常が
+    # 1件もないためrecallの分母(TP+FN)が0になるケース)。0.0で埋めると
+    # 「検知に完全失敗した」と誤読されるため区別する。
+    return numerator / denominator if denominator > 0 else float("nan")
 
 
 def labels_to_positive_flags(labels: Sequence[str]) -> list[bool]:

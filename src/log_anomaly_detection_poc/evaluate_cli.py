@@ -1,4 +1,5 @@
 import argparse
+import math
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -118,12 +119,19 @@ def plot_precision_by_days(
     plt.close(fig)
 
 
+def _format_ratio(value: float) -> str:
+    # NaNは「評価不能(分母が0)」を表す。0.000と表示すると「完全に失敗した」と
+    # 誤読されるため、N/Aと明示する。
+    return "N/A" if math.isnan(value) else f"{value:.3f}"
+
+
 def _print_variant(label: str, variant: dict[str, PrecisionRecall]) -> None:
     print(f"  [{label}]")
     for algorithm, r in variant.items():
         counts = f"TP={r.true_positive} FP={r.false_positive} FN={r.false_negative}"
-        metrics = f"precision={r.precision:.3f} recall={r.recall:.3f}"
-        print(f"    {algorithm}: {metrics} ({counts})")
+        precision = _format_ratio(r.precision)
+        recall = _format_ratio(r.recall)
+        print(f"    {algorithm}: precision={precision} recall={recall} ({counts})")
 
 
 def _print_summary(
