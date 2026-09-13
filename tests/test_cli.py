@@ -27,8 +27,10 @@ def test_main_writes_observed_and_ground_truth_csv(tmp_path: Path) -> None:
 
 def test_main_is_reproducible_with_same_seed(tmp_path: Path) -> None:
     # generate_logs自体の再現性はtest_log_generator.pyで検証済みのため、ここでは
-    # CLIのファイル書き出し経路が再現性を壊していないことだけを確認すればよく、
-    # daysは小さい値で十分(2回のmain()呼び出しを軽量に保つ)。
+    # CLIのファイル書き出し経路が再現性を壊していないことだけを確認すればよい。
+    # days=7ではpytest経由でのみ(coverageの有無に関係なく、素のスクリプトループでは
+    # 再現しない)まれに数分単位で停止する現象を検証で確認した(根本原因未特定)。
+    # days=1では検証で20回以上連続成功しており、回避策としてこの値にしている。
     output_a = tmp_path / "a.csv"
     output_b = tmp_path / "b.csv"
 
