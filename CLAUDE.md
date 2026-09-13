@@ -46,6 +46,8 @@ gitleaks を実行するには `gitleaks` コマンドが必要（`sudo apt inst
 | バグ | 該当ケース | 発見箇所 |
 |---|---|---|
 | (例) 空入力でXがY件返るはずがZ件返っていた | 空・境界値 | PR #N レビュー |
+| 同じscenario_idがSTL・IsolationForest両方でflaggedの場合、Streamlitのボタンkeyが重複しStreamlitDuplicateElementKey例外が発生 | コーナーケース(複数条件の組み合わせ) | Step6、`AppTest`での実操作込み検証(PR #16) |
+| summarize_root_causeのtry節がAPI呼び出し自体しか覆っておらず、例外を投げずchoicesが空になる応答でIndexError/AttributeErrorが未捕捉のままUIに伝播しうる | 不正入力(例外ではなく想定外の形式の応答) | Step7、PRレビュー指摘(PR #18) |
 
 ## IOとpureロジックの分離
 
