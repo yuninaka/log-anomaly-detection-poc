@@ -21,13 +21,25 @@ def load_observed_csv(path: str) -> pd.DataFrame:
     return pd.read_csv(path, parse_dates=["timestamp"])
 
 
+DEFAULT_FREQ = "5min"
+
+
+def floor_to_bucket(timestamps: pd.Series, freq: str = DEFAULT_FREQ) -> pd.Series:
+    """タイムスタンプをfreq単位のバケット開始時刻に丸める。
+
+    data_layers.pyのRawDataRecord構築でも、ここと同じバケット境界を使う必要が
+    あるため(MetadataRecordのscenario_idと一致させるため)公開関数にしている。
+    """
+    return pd.Series(timestamps.dt.floor(freq))
+
+
 def _bucket_starts(start: datetime, end: datetime, freq: str) -> pd.DatetimeIndex:
     return pd.date_range(start=start, end=end, freq=freq, inclusive="left")
 
 
 def _assign_buckets(observed: pd.DataFrame, freq: str) -> pd.DataFrame:
     df = observed.copy()
-    df["window_start"] = df["timestamp"].dt.floor(freq)
+    df["window_start"] = floor_to_bucket(df["timestamp"], freq)
     return df
 
 
@@ -71,7 +83,7 @@ def _compute_error_rate(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def aggregate_observed_logs(
-    observed: pd.DataFrame, start: datetime, end: datetime, freq: str = "5min"
+    observed: pd.DataFrame, start: datetime, end: datetime, freq: str = DEFAULT_FREQ
 ) -> pd.DataFrame:
     """観測ログをendpoint×freq単位のバケットに集計する。
 
