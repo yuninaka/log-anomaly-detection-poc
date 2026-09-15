@@ -262,6 +262,9 @@ uv run python -m log_anomaly_detection_poc.evaluate_cli --show-progress
 
 ## サイレント運用モード(Step5)
 
+ゼロから環境構築する手順は[docs/setup-guide-for-silent-mode.md](docs/setup-guide-for-silent-mode.md)
+を参照(クリーンな環境で実際に検証した手順・出力例・つまずきやすいポイントをまとめている)。
+
 ```bash
 uv run python -m log_anomaly_detection_poc.evaluate_cli --show-progress
 ```
